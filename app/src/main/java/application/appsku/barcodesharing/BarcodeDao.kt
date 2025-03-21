@@ -8,7 +8,7 @@ import androidx.room.Query
 interface BarcodeDao {
 
     @Insert
-    suspend fun insertUser(user: BarcodeEntity)
+    suspend fun insert(barcode: BarcodeEntity)
 
     @Query("SELECT * FROM Barcode")
     suspend fun getAllBarcode(): List<BarcodeEntity>

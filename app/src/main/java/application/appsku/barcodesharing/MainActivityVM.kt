@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -17,23 +18,47 @@ class MainActivityVM(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val barcodeDao = db.barcodeDao()
 
-    fun insertUser(barcodeCode : String) {
+    fun insert(barcodeCode: String) {
         viewModelScope.launch {
-            barcodeDao.insertUser(BarcodeEntity(barcodeCode = barcodeCode))
+            barcodeDao.insert(BarcodeEntity(barcodeCode = barcodeCode))
         }
     }
 
-    fun getAllBarcode(context: Context) {
+    fun getAllBarcode(context: Context,list : (List<String>) -> Unit) {
         viewModelScope.launch {
             val barcodeEntities = barcodeDao.getAllBarcode()
             barcodeEntities.forEach {
                 println("Barcode is -> ${it.barcodeCode}")
             }
-            if (barcodeEntities.isNotEmpty()){
+            if (barcodeEntities.isNotEmpty()) {
                 exportDatabaseToSDCard(context)
+
+                list.invoke(barcodeEntities.map { it.barcodeCode })
             }
         }
     }
+
+    fun openDatabaseFromSDCard(context: Context) : List<String> {
+        val barcodeEntity = mutableListOf<String>()
+        val sdCardDbPath = File(context.getSDCardPath(), "BarcodeApp/barcode_database.db")
+
+         if (sdCardDbPath.exists()) {
+            val db = SQLiteDatabase.openDatabase(sdCardDbPath.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+             val cursor = db.rawQuery("SELECT * FROM Barcode", null)
+             while (cursor.moveToNext()) {
+                 val id = cursor.getInt(cursor.getColumnIndexOrThrow("id"))
+                 val barcode = cursor.getString(cursor.getColumnIndexOrThrow("barcode"))
+                 barcodeEntity.add(barcode)
+                 Log.d("Database", "ID: $id, Barcode: $barcode")
+             }
+             cursor.close()
+             db.close()
+        } else {
+            Log.e("Database", "Database tidak ditemukan di SD Card!")
+        }
+        return barcodeEntity
+    }
+
 
     /**
      * Copy Sqlite to SD Card (overwrite)
@@ -58,7 +83,8 @@ class MainActivityVM(application: Application) : AndroidViewModel(application) {
         }
 
         // ✅ Cek apakah file sudah ada di MediaStore
-        val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} = ? AND ${MediaStore.Files.FileColumns.RELATIVE_PATH} = ?"
+        val selection =
+            "${MediaStore.Files.FileColumns.DISPLAY_NAME} = ? AND ${MediaStore.Files.FileColumns.RELATIVE_PATH} = ?"
         val selectionArgs = arrayOf("barcode_database.db", "Documents/BarcodeApp/")
 
         val uriToDelete = context.contentResolver.query(
@@ -69,7 +95,8 @@ class MainActivityVM(application: Application) : AndroidViewModel(application) {
             null
         )?.use { cursor ->
             if (cursor.moveToFirst()) {
-                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID))
+                val id =
+                    cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID))
                 ContentUris.withAppendedId(MediaStore.Files.getContentUri(sdCardVolume), id)
             } else null
         }
@@ -105,10 +132,30 @@ class MainActivityVM(application: Application) : AndroidViewModel(application) {
      */
     private fun exportDatabase(context: Context) {
         val dbPath = File(context.getDatabasePath("barcode_database.db").absolutePath)
-        val exportPath = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "barcode_database.db")
+        val exportPath = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+            "barcode_database.db"
+        )
 
         if (dbPath.exists()) {
             dbPath.copyTo(exportPath, overwrite = true)
+        }
+    }
+
+    private fun Context.getSDCardPath(): String {
+        val volumeNames = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.getExternalVolumeNames(this)
+        } else {
+            File("/storage/")
+                .listFiles()
+                ?.filter { it.isDirectory && it.canRead() && it.name != "emulated" }
+                ?.map { it.absolutePath }
+                ?.toSet()
+                ?: emptySet()
+        }
+        return volumeNames.find { it != "external_primary" } ?: run {
+            Log.e("DatabaseExport", "Tidak ditemukan SD Card!")
+            ""
         }
     }
 
